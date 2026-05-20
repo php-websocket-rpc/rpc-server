@@ -77,7 +77,7 @@ final class RpcServer implements WebsocketClientHandler
     private ?AuthorizationProvider $authorizationProvider = null;
     private bool $authWired = false;
 
-    private function __construct(
+    public function __construct(
         private readonly ?LoggerInterface $logger = null,
     ) {
         $this->router = new RpcRouter();
