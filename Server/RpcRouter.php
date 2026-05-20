@@ -80,7 +80,7 @@ final class RpcRouter
 
     public function hasHandler(string $requestClass): bool
     {
-        return isset($this->handlers[$requestClass]);
+        return \array_key_exists($requestClass, $this->handlers);
     }
 
     private function invokeHandler(array &$handlers, Payload $payload, ClientSession $session): ?Payload

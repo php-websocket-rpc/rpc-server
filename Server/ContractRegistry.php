@@ -13,6 +13,7 @@ use PhpWebsocketRpc\Rpc\Contract\ContractStreamInvocation;
 use PhpWebsocketRpc\Rpc\Contract\ContractStreamValue;
 use PhpWebsocketRpc\Rpc\Exception\RpcDispatchException;
 use PhpWebsocketRpc\Rpc\Payload\Error;
+use PhpWebsocketRpc\RpcServer\Auth\ClientSessionContext;
 
 /**
  * Server-side registry and dispatcher for contract-based RPC services.
@@ -57,7 +58,7 @@ final class ContractRegistry
      */
     public function has(string $interface): bool
     {
-        return isset($this->services[$interface]);
+        return \array_key_exists($interface, $this->services);
     }
 
     /**
@@ -80,21 +81,27 @@ final class ContractRegistry
      *
      * Calls the registered method and wraps the return value in a ContractResponse.
      */
-    public function dispatch(ContractInvocation $invocation): ContractResponse
+    public function dispatch(ContractInvocation $invocation, ClientSession $session): ContractResponse
     {
-        $service = $this->getService($invocation->service);
-        $methodName = $invocation->method;
+        ClientSessionContext::set($session);
 
-        if (!\method_exists($service, $methodName)) {
-            throw new RpcDispatchException(
-                \sprintf('Method "%s" not found on service %s', $methodName, $invocation->service),
-                Error::METHOD_NOT_FOUND,
-            );
+        try {
+            $service = $this->getService($invocation->service);
+            $methodName = $invocation->method;
+
+            if (!\method_exists($service, $methodName)) {
+                throw new RpcDispatchException(
+                    \sprintf('Method "%s" not found on service %s', $methodName, $invocation->service),
+                    Error::METHOD_NOT_FOUND,
+                );
+            }
+
+            $result = $service->$methodName(...$invocation->params);
+
+            return new ContractResponse(result: ContractSerializer::encode($result));
+        } finally {
+            ClientSessionContext::reset();
         }
-
-        $result = $service->$methodName(...$invocation->params);
-
-        return new ContractResponse(result: ContractSerializer::encode($result));
     }
 
     /**
@@ -128,7 +135,7 @@ final class ContractRegistry
         $channel = $invocation->channel();
 
         // Iterate the Traversable in a background fiber, pushing values as they come
-        \Amp\async(function () use ($result, $session, $channel): void {
+        \Amp\async(static function () use ($result, $session, $channel): void {
             try {
                 foreach ($result as $value) {
                     if ($session->isClosed()) {
@@ -193,7 +200,7 @@ final class ContractRegistry
         }
 
         // Create a server-side push callback that encodes values and sends to the client
-        $pushCallback = function (mixed $value) use ($session, $channel): void {
+        $pushCallback = static function (mixed $value) use ($session, $channel): void {
             if ($session->isClosed()) {
                 return;
             }

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace PhpWebsocketRpc\RpcServer\Server;
 
-use Amp\Http\Server\DefaultErrorHandler;
+
 use Amp\Http\Server\Request;
 use Amp\Http\Server\Response;
 use Amp\Http\Server\Router;
@@ -12,13 +12,17 @@ use Amp\Http\Server\SocketHttpServer;
 use Amp\Websocket\Server\Rfc6455Acceptor;
 use Amp\Websocket\Server\Websocket;
 use Amp\Websocket\Server\WebsocketAcceptor;
-use Amp\Websocket\Server\WebsocketClientAcceptor;
+
 use Amp\Websocket\Server\WebsocketClientHandler;
 use Amp\Websocket\WebsocketClient;
+use PhpWebsocketRpc\Rpc\Contract\Attribute\NeedAuthorization;
+use PhpWebsocketRpc\Rpc\Contract\AuthService as AuthServiceContract;
 use PhpWebsocketRpc\Rpc\Contract\ContractInvocation;
 use PhpWebsocketRpc\Rpc\Contract\ContractPublish;
 use PhpWebsocketRpc\Rpc\Contract\ContractResponse;
 use PhpWebsocketRpc\Rpc\Contract\ContractStreamInvocation;
+use PhpWebsocketRpc\Rpc\Exception\AuthenticationException;
+use PhpWebsocketRpc\Rpc\Exception\AuthorizationException;
 use PhpWebsocketRpc\Rpc\Middleware\MiddlewarePipeline;
 use PhpWebsocketRpc\Rpc\Payload\Error;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
@@ -26,6 +30,10 @@ use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Serialization\Serializer;
 use PhpWebsocketRpc\Rpc\Stream\StreamChannelAware;
 use PhpWebsocketRpc\Rpc\Stream\StreamSubscribable;
+use PhpWebsocketRpc\RpcServer\Auth\AuthenticationProvider;
+use PhpWebsocketRpc\RpcServer\Auth\AuthorizationProvider;
+use PhpWebsocketRpc\RpcServer\Auth\AuthService;
+
 use PhpWebsocketRpc\RpcServer\Middleware\ServerMiddlewareInterface;
 use PhpWebsocketRpc\RpcServer\Stream\StreamChannel;
 use Psr\Log\LoggerInterface;
@@ -64,6 +72,10 @@ final class RpcServer implements WebsocketClientHandler
 
     private ?Websocket $websocket = null;
     private bool $started = false;
+
+    private ?AuthenticationProvider $authenticationProvider = null;
+    private ?AuthorizationProvider $authorizationProvider = null;
+    private bool $authWired = false;
 
     private function __construct(
         private readonly ?LoggerInterface $logger = null,
@@ -171,11 +183,31 @@ final class RpcServer implements WebsocketClientHandler
 
     public function use(ServerMiddlewareInterface $middleware): void
     {
-        $this->middlewarePipeline->use(function (Payload $payload, callable $next, ClientSession $session) use (
+        $this->middlewarePipeline->use(static function (Payload $payload, callable $next, ClientSession $session) use (
             $middleware,
         ): ?Payload {
             return $middleware->handle($payload, $session, $next);
         });
+    }
+
+    /**
+     * Enable authentication and authorization for the server.
+     *
+     * Calling this method:
+     *   1. Automatically registers the AuthService contract so that clients
+     *      can call authenticate() and logout().
+     *   2. Wires a middleware that checks #[NeedAuthorization] attributes
+     *      before dispatching to service methods.
+     *
+     * @param AuthenticationProvider      $authProvider  Validates tokens
+     * @param AuthorizationProvider|null   $authzProvider Optional fine-grained authorization
+     */
+    public function useAuthentication(
+        AuthenticationProvider $authProvider,
+        ?AuthorizationProvider $authzProvider = null,
+    ): void {
+        $this->authenticationProvider = $authProvider;
+        $this->authorizationProvider = $authzProvider;
     }
 
     /**
@@ -213,11 +245,108 @@ final class RpcServer implements WebsocketClientHandler
         $registry = $this->contractRegistry;
         \assert($registry !== null);
 
+        // Auto-register AuthService if authentication is configured
+        if ($this->authenticationProvider !== null && !$this->authWired) {
+            $this->authWired = true;
+            $this->registerService(AuthServiceContract::class, new AuthService($this->authenticationProvider));
+
+            // Wire the auth middleware
+            $this->use(new class($this->authorizationProvider) implements ServerMiddlewareInterface {
+                public function __construct(
+                    private readonly ?AuthorizationProvider $authorizationProvider,
+                ) {}
+
+                public function handle(Payload $payload, ClientSession $session, callable $next): ?Payload
+                {
+                    // Only intercept contract invocations
+                    if (!$payload instanceof ContractInvocation) {
+                        return $next($payload, $session);
+                    }
+
+                    // Always allow authenticate/logouth through
+                    if ($payload->method === 'authenticate' || $payload->method === 'logout') {
+                        return $next($payload, $session);
+                    }
+
+                    // Check if the target service interface has #[NeedAuthorization]
+                    $needsAuth = false;
+                    $requiredRoles = null;
+
+                    try {
+                        $refClass = new \ReflectionClass($payload->service);
+                        $refMethod = $refClass->getMethod($payload->method);
+
+                        // Check method-level attribute first
+                        $methodAttr = $refMethod->getAttributes(NeedAuthorization::class);
+                        if ($methodAttr !== []) {
+                            $needsAuth = true;
+                            $requiredRoles = $methodAttr[0]->newInstance()->roles;
+                        }
+
+                        // Fall back to class-level attribute
+                        if (!$needsAuth) {
+                            $classAttr = $refClass->getAttributes(NeedAuthorization::class);
+                            if ($classAttr !== []) {
+                                $needsAuth = true;
+                                $requiredRoles = $classAttr[0]->newInstance()->roles;
+                            }
+                        }
+                    } catch (\ReflectionException) {
+                        // Service class not found — allow through
+                    }
+
+                    if (!$needsAuth) {
+                        return $next($payload, $session);
+                    }
+
+                    // Check authentication
+                    $user = $session->getAttribute('_auth_user');
+
+                    if ($user === null) {
+                        throw new AuthenticationException('Authentication required. Call authenticate() first.');
+                    }
+
+                    // Check authorization
+                    if ($requiredRoles !== null && \count($requiredRoles) > 0) {
+                        $userRoles = $user->getRoles();
+
+                        $hasRole = \count(\array_intersect($requiredRoles, $userRoles)) > 0;
+
+                        if (!$hasRole) {
+                            throw new AuthorizationException(
+                                \sprintf(
+                                    'Requires one of roles: %s. User has: %s',
+                                    \implode(', ', $requiredRoles),
+                                    \implode(', ', $userRoles),
+                                ),
+                                -32_011,
+                                ['required_roles' => $requiredRoles, 'user_roles' => $userRoles],
+                            );
+                        }
+                    }
+
+                    // Custom authorization provider
+                    if ($this->authorizationProvider !== null) {
+                        $this->authorizationProvider->authorize(
+                            $user,
+                            $session,
+                            $payload->service,
+                            $payload->method,
+                            $requiredRoles,
+                        );
+                    }
+
+                    return $next($payload, $session);
+                }
+            });
+        }
+
         // Handler for call/response pattern
-        $this->router->on(ContractInvocation::class, function (ContractInvocation $invocation) use (
-            $registry,
-        ): ContractResponse {
-            return $registry->dispatch($invocation);
+        $this->router->on(ContractInvocation::class, static function (
+            ContractInvocation $invocation,
+            ClientSession $session,
+        ) use ($registry): ContractResponse {
+            return $registry->dispatch($invocation, $session);
         });
 
         // Handler for stream/subscribe pattern
@@ -235,7 +364,7 @@ final class RpcServer implements WebsocketClientHandler
         });
 
         // Handler for publish pattern
-        $this->router->onPublish(ContractPublish::class, function (
+        $this->router->onPublish(ContractPublish::class, static function (
             ContractPublish $publish,
             ClientSession $session,
         ) use ($registry): void {

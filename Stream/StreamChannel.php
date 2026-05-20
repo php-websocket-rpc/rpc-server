@@ -63,7 +63,7 @@ final class StreamChannel
                 continue;
             }
 
-            \Amp\async(function () use ($session, $data): void {
+            \Amp\async(static function () use ($session, $data): void {
                 try {
                     $session->send($data);
                 } catch (\Throwable) {
