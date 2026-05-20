@@ -67,11 +67,12 @@ final class ContractRegistry
      */
     public function getService(string $interface): object
     {
-        return $this->services[$interface]
-            ?? throw new RpcDispatchException(
+        return (
+            $this->services[$interface] ?? throw new RpcDispatchException(
                 \sprintf('No service registered for %s', $interface),
                 Error::METHOD_NOT_FOUND,
-            );
+            )
+        );
     }
 
     /**
@@ -93,9 +94,7 @@ final class ContractRegistry
 
         $result = $service->$methodName(...$invocation->params);
 
-        return new ContractResponse(
-            result: ContractSerializer::encode($result),
-        );
+        return new ContractResponse(result: ContractSerializer::encode($result));
     }
 
     /**
@@ -119,7 +118,7 @@ final class ContractRegistry
 
         $result = $service->$methodName(...$invocation->params);
 
-        if (!($result instanceof \Traversable)) {
+        if (!$result instanceof \Traversable) {
             throw new RpcDispatchException(
                 \sprintf('Method "%s" must return Traversable for streaming', $methodName),
                 Error::INTERNAL_ERROR,
@@ -136,9 +135,7 @@ final class ContractRegistry
                         break;
                     }
 
-                    $streamValue = new ContractStreamValue(
-                        value: ContractSerializer::encode($value),
-                    );
+                    $streamValue = new ContractStreamValue(value: ContractSerializer::encode($value));
                     $streamValue->setChannel($channel);
                     $session->send($streamValue);
                 }
@@ -201,9 +198,7 @@ final class ContractRegistry
                 return;
             }
 
-            $streamValue = new ContractStreamValue(
-                value: ContractSerializer::encode($value),
-            );
+            $streamValue = new ContractStreamValue(value: ContractSerializer::encode($value));
             $streamValue->setChannel($channel);
             $session->send($streamValue);
         };

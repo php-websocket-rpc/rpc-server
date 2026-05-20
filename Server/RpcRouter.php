@@ -66,11 +66,15 @@ final class RpcRouter
     public function dispatch(Payload $payload, ClientSession $session): ?Payload
     {
         return match (true) {
-            $payload instanceof Kind\RpcRequest   => $this->invokeHandler($this->handlers, $payload, $session),
-            $payload instanceof Kind\StreamOpen   => $this->invokeVoidHandler($this->subscribeHandlers, $payload, $session),
-            $payload instanceof Kind\StreamData   => $this->invokeVoidHandler($this->publishHandlers, $payload, $session),
+            $payload instanceof Kind\RpcRequest => $this->invokeHandler($this->handlers, $payload, $session),
+            $payload instanceof Kind\StreamOpen => $this->invokeVoidHandler(
+                $this->subscribeHandlers,
+                $payload,
+                $session,
+            ),
+            $payload instanceof Kind\StreamData => $this->invokeVoidHandler($this->publishHandlers, $payload, $session),
             $payload instanceof Kind\Notification => $this->invokeVoidHandler($this->handlers, $payload, $session),
-            default                               => null,
+            default => null,
         };
     }
 
@@ -85,10 +89,7 @@ final class RpcRouter
         $handler = $handlers[$class] ?? $handlers['*'] ?? null;
 
         if ($handler === null) {
-            throw new RpcDispatchException(
-                \sprintf('No handler registered for %s', $class),
-                Error::METHOD_NOT_FOUND,
-            );
+            throw new RpcDispatchException(\sprintf('No handler registered for %s', $class), Error::METHOD_NOT_FOUND);
         }
 
         return $handler($payload, $session);

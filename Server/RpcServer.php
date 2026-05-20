@@ -15,20 +15,20 @@ use Amp\Websocket\Server\WebsocketAcceptor;
 use Amp\Websocket\Server\WebsocketClientAcceptor;
 use Amp\Websocket\Server\WebsocketClientHandler;
 use Amp\Websocket\WebsocketClient;
-use Psr\Log\LoggerInterface;
 use PhpWebsocketRpc\Rpc\Contract\ContractInvocation;
 use PhpWebsocketRpc\Rpc\Contract\ContractPublish;
 use PhpWebsocketRpc\Rpc\Contract\ContractResponse;
 use PhpWebsocketRpc\Rpc\Contract\ContractStreamInvocation;
 use PhpWebsocketRpc\Rpc\Middleware\MiddlewarePipeline;
-use PhpWebsocketRpc\RpcServer\Middleware\ServerMiddlewareInterface;
 use PhpWebsocketRpc\Rpc\Payload\Error;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Serialization\Serializer;
-use PhpWebsocketRpc\RpcServer\Stream\StreamChannel;
 use PhpWebsocketRpc\Rpc\Stream\StreamChannelAware;
 use PhpWebsocketRpc\Rpc\Stream\StreamSubscribable;
+use PhpWebsocketRpc\RpcServer\Middleware\ServerMiddlewareInterface;
+use PhpWebsocketRpc\RpcServer\Stream\StreamChannel;
+use Psr\Log\LoggerInterface;
 
 /**
  * Async RPC server over WebSocket.
@@ -94,12 +94,7 @@ final class RpcServer implements WebsocketClientHandler
 
         $wsAcceptor = $acceptor ?? new Rfc6455Acceptor();
 
-        $server->websocket = new Websocket(
-            $httpServer,
-            $logger,
-            $wsAcceptor,
-            $server,
-        );
+        $server->websocket = new Websocket($httpServer, $logger, $wsAcceptor, $server);
 
         $router->addRoute('GET', $path, $server->websocket);
 
@@ -176,11 +171,11 @@ final class RpcServer implements WebsocketClientHandler
 
     public function use(ServerMiddlewareInterface $middleware): void
     {
-        $this->middlewarePipeline->use(
-            function (Payload $payload, callable $next, ClientSession $session) use ($middleware): ?Payload {
-                return $middleware->handle($payload, $session, $next);
-            }
-        );
+        $this->middlewarePipeline->use(function (Payload $payload, callable $next, ClientSession $session) use (
+            $middleware,
+        ): ?Payload {
+            return $middleware->handle($payload, $session, $next);
+        });
     }
 
     /**
@@ -219,34 +214,33 @@ final class RpcServer implements WebsocketClientHandler
         \assert($registry !== null);
 
         // Handler for call/response pattern
-        $this->router->on(
-            ContractInvocation::class,
-            function (ContractInvocation $invocation) use ($registry): ContractResponse {
-                return $registry->dispatch($invocation);
-            },
-        );
+        $this->router->on(ContractInvocation::class, function (ContractInvocation $invocation) use (
+            $registry,
+        ): ContractResponse {
+            return $registry->dispatch($invocation);
+        });
 
         // Handler for stream/subscribe pattern
-        $this->router->onSubscribe(
-            ContractStreamInvocation::class,
-            function (ContractStreamInvocation $invocation, ClientSession $session) use ($registry): void {
-                $refMethod = $this->resolveServiceMethod($registry, $invocation);
+        $this->router->onSubscribe(ContractStreamInvocation::class, function (
+            ContractStreamInvocation $invocation,
+            ClientSession $session,
+        ) use ($registry): void {
+            $refMethod = $this->resolveServiceMethod($registry, $invocation);
 
-                if ($registry->hasCallableParameter($refMethod)) {
-                    $registry->dispatchSubscribe($invocation, $session);
-                } else {
-                    $registry->dispatchStream($invocation, $session);
-                }
-            },
-        );
+            if ($registry->hasCallableParameter($refMethod)) {
+                $registry->dispatchSubscribe($invocation, $session);
+            } else {
+                $registry->dispatchStream($invocation, $session);
+            }
+        });
 
         // Handler for publish pattern
-        $this->router->onPublish(
-            ContractPublish::class,
-            function (ContractPublish $publish, ClientSession $session) use ($registry): void {
-                $registry->dispatchPublish($publish, $session);
-            },
-        );
+        $this->router->onPublish(ContractPublish::class, function (
+            ContractPublish $publish,
+            ClientSession $session,
+        ) use ($registry): void {
+            $registry->dispatchPublish($publish, $session);
+        });
 
         $this->log('info', 'Auto-wired contract dispatch handlers');
     }
@@ -254,8 +248,10 @@ final class RpcServer implements WebsocketClientHandler
     /**
      * Resolve the ReflectionMethod for a ContractStreamInvocation.
      */
-    private function resolveServiceMethod(ContractRegistry $registry, ContractStreamInvocation $invocation): \ReflectionMethod
-    {
+    private function resolveServiceMethod(
+        ContractRegistry $registry,
+        ContractStreamInvocation $invocation,
+    ): \ReflectionMethod {
         $service = $registry->getService($invocation->service);
 
         if (!\method_exists($service, $invocation->method)) {
@@ -301,16 +297,9 @@ final class RpcServer implements WebsocketClientHandler
         $this->log('info', 'RPC WebSocket server stopped');
     }
 
-    public function handleClient(
-        WebsocketClient $client,
-        Request $request,
-        Response $response,
-    ): void {
-        $session = new ClientSession(
-            $client,
-            $this->router,
-            $this->middlewarePipeline,
-        );
+    public function handleClient(WebsocketClient $client, Request $request, Response $response): void
+    {
+        $session = new ClientSession($client, $this->router, $this->middlewarePipeline);
 
         // When the client unsubscribes from a channel, remove them
         $session->onStreamClose(function (string $channel) use ($session): void {

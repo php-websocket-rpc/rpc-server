@@ -29,15 +29,11 @@ final class SoftLimitRateLimiter implements RateLimiterInterface
         private readonly int $windowSeconds = 1,
     ) {
         if ($maxRequests < 1) {
-            throw new \InvalidArgumentException(
-                'maxRequests must be at least 1',
-            );
+            throw new \InvalidArgumentException('maxRequests must be at least 1');
         }
 
         if ($windowSeconds < 1) {
-            throw new \InvalidArgumentException(
-                'windowSeconds must be at least 1',
-            );
+            throw new \InvalidArgumentException('windowSeconds must be at least 1');
         }
     }
 

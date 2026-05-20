@@ -142,29 +142,32 @@ final class ClientSession
 
             if ($response !== null) {
                 // Wrap in RpcResponse and send back
-                $envelope = new RpcResponse(
-                    id: $payload->id,
-                    payload: $response,
-                );
+                $envelope = new RpcResponse(id: $payload->id, payload: $response);
                 $this->send($envelope);
             }
         } catch (RpcDispatchException $e) {
             // Known dispatch error — send error response with original exception class
-            $this->sendError($payload->id, new Error(
-                code: $e->getRpcCode(),
-                message: $e->getMessage(),
-                data: $e->getErrorData(),
-                exceptionClass: $e::class,
-            ));
+            $this->sendError(
+                $payload->id,
+                new Error(
+                    code: $e->getRpcCode(),
+                    message: $e->getMessage(),
+                    data: $e->getErrorData(),
+                    exceptionClass: $e::class,
+                ),
+            );
         } catch (\Throwable $e) {
             // Unexpected error — include the original exception class
             // so the client can reconstruct it on the other side
-            $this->sendError($payload->id, new Error(
-                code: Error::INTERNAL_ERROR,
-                message: 'Internal server error: ' . $e->getMessage(),
-                data: null,
-                exceptionClass: $e::class,
-            ));
+            $this->sendError(
+                $payload->id,
+                new Error(
+                    code: Error::INTERNAL_ERROR,
+                    message: 'Internal server error: ' . $e->getMessage(),
+                    data: null,
+                    exceptionClass: $e::class,
+                ),
+            );
         }
     }
 
@@ -185,11 +188,7 @@ final class ClientSession
 
     private function sendError(string $requestId, Error $error): void
     {
-        $response = new RpcResponse(
-            id: $requestId,
-            payload: null,
-            error: $error,
-        );
+        $response = new RpcResponse(id: $requestId, payload: null, error: $error);
 
         $this->send($response);
     }

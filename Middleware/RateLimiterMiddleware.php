@@ -59,9 +59,7 @@ final class RateLimiterMiddleware implements ServerMiddlewareInterface
                 'payload_id' => $payload->id,
             ]);
 
-            throw new RateLimitException(
-                message: 'Too many requests. Please slow down.',
-            );
+            throw new RateLimitException(message: 'Too many requests. Please slow down.');
         }
 
         return $next($payload, $session);
@@ -69,8 +67,6 @@ final class RateLimiterMiddleware implements ServerMiddlewareInterface
 
     private function resolveIdentifier(ClientSession $session): string
     {
-        return $this->identifierFactory
-            ? ($this->identifierFactory)($session)
-            : (string) $session->getClientId();
+        return $this->identifierFactory ? ($this->identifierFactory)($session) : (string) $session->getClientId();
     }
 }
