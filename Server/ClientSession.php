@@ -12,7 +12,7 @@ use PhpWebsocketRpc\Rpc\Payload\Error;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Payload\RpcResponse;
-use PhpWebsocketRpc\RpcClient\Transport\FramedConnection;
+use PhpWebsocketRpc\Rpc\Transport\FramedConnection;
 
 final class ClientSession
 {
