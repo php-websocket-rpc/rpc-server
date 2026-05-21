@@ -24,12 +24,9 @@ use PhpWebsocketRpc\Rpc\Contract\ContractStreamInvocation;
 use PhpWebsocketRpc\Rpc\Exception\AuthenticationException;
 use PhpWebsocketRpc\Rpc\Exception\AuthorizationException;
 use PhpWebsocketRpc\Rpc\Middleware\MiddlewarePipeline;
-use PhpWebsocketRpc\Rpc\Payload\Error;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Serialization\Serializer;
-use PhpWebsocketRpc\Rpc\Stream\StreamChannelAware;
-use PhpWebsocketRpc\Rpc\Stream\StreamSubscribable;
 use PhpWebsocketRpc\RpcServer\Auth\AuthenticationProvider;
 use PhpWebsocketRpc\RpcServer\Auth\AuthorizationProvider;
 use PhpWebsocketRpc\RpcServer\Auth\AuthService;
@@ -38,27 +35,9 @@ use PhpWebsocketRpc\RpcServer\Middleware\ServerMiddlewareInterface;
 use PhpWebsocketRpc\RpcServer\Stream\StreamChannel;
 use Psr\Log\LoggerInterface;
 
-/**
- * Async RPC server over WebSocket.
- *
- * Attaches to an amphp HTTP server and handles WebSocket connections
- * for typed RPC calls, notifications, and streaming.
- *
- * Fully non-blocking — all request handling happens in amphp fibers.
- *
- * Usage:
- *   $server = RpcServer::attach($httpServer, $router, '/rpc', $logger);
- *
- *   $server->on(MathDivideRequest::class, function(MathDivideRequest $r) {
- *       return new MathDivideResponse(result: $r->x + $r->y);
- *   });
- *
- *   $server->start();
- */
 final class RpcServer implements WebsocketClientHandler
 {
     private readonly RpcRouter $router;
-    private readonly Serializer $serializer;
     private ?ContractRegistry $contractRegistry = null;
 
     /** @var MiddlewarePipeline<Payload, ?Payload> */
@@ -81,7 +60,6 @@ final class RpcServer implements WebsocketClientHandler
         private readonly ?LoggerInterface $logger = null,
     ) {
         $this->router = new RpcRouter();
-        $this->serializer = new Serializer();
         $this->middlewarePipeline = new MiddlewarePipeline();
         $this->sessions = new \SplObjectStorage();
     }
@@ -190,18 +168,6 @@ final class RpcServer implements WebsocketClientHandler
         });
     }
 
-    /**
-     * Enable authentication and authorization for the server.
-     *
-     * Calling this method:
-     *   1. Automatically registers the AuthService contract so that clients
-     *      can call authenticate() and logout().
-     *   2. Wires a middleware that checks #[NeedAuthorization] attributes
-     *      before dispatching to service methods.
-     *
-     * @param AuthenticationProvider      $authProvider  Validates tokens
-     * @param AuthorizationProvider|null   $authzProvider Optional fine-grained authorization
-     */
     public function useAuthentication(
         AuthenticationProvider $authProvider,
         ?AuthorizationProvider $authzProvider = null,
@@ -211,20 +177,18 @@ final class RpcServer implements WebsocketClientHandler
     }
 
     /**
-     * Register a contract service implementation.
-     *
-     * The first call to registerService() automatically wires the
-     * contract dispatch handlers (ContractInvocation and ContractStreamInvocation).
-     *
-     * @param string $interface      Fully qualified interface name
-     * @param object $implementation Concrete implementation
+     * @param class-string $interface
+     * @param object $implementation
      */
     public function registerService(string $interface, object $implementation): void
     {
+        if (!\is_subclass_of($implementation::class, $interface)) {
+            throw new \InvalidArgumentException("Implementation must implement interface $interface");
+        }
+
         $this->contractRegistry ??= new ContractRegistry();
         $this->contractRegistry->register($interface, $implementation);
 
-        // Auto-wire contract handlers on first registration
         if (!$this->router->hasHandler(ContractInvocation::class)) {
             $this->autoWireContractHandlers();
         }
@@ -235,11 +199,6 @@ final class RpcServer implements WebsocketClientHandler
         ]);
     }
 
-    /**
-     * Auto-wire all contract dispatch handlers.
-     *
-     * Called once on the first registerService() call.
-     */
     private function autoWireContractHandlers(): void
     {
         $registry = $this->contractRegistry;
@@ -300,7 +259,7 @@ final class RpcServer implements WebsocketClientHandler
                     }
 
                     // Check authentication
-                    $user = $session->getAttribute('_auth_user');
+                    $user = $session->getAttribute(AuthService::USER);
 
                     if ($user === null) {
                         throw new AuthenticationException('Authentication required. Call authenticate() first.');
@@ -374,9 +333,6 @@ final class RpcServer implements WebsocketClientHandler
         $this->log('info', 'Auto-wired contract dispatch handlers');
     }
 
-    /**
-     * Resolve the ReflectionMethod for a ContractStreamInvocation.
-     */
     private function resolveServiceMethod(
         ContractRegistry $registry,
         ContractStreamInvocation $invocation,
@@ -428,7 +384,7 @@ final class RpcServer implements WebsocketClientHandler
 
     public function handleClient(WebsocketClient $client, Request $request, Response $response): void
     {
-        $session = new ClientSession($client, $this->router, $this->middlewarePipeline);
+        $session = new ClientSession($client, $this->router, $this->middlewarePipeline, $this->logger);
 
         // When the client unsubscribes from a channel, remove them
         $session->onStreamClose(function (string $channel) use ($session): void {

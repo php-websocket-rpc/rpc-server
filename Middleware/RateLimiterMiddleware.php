@@ -11,36 +11,8 @@ use PhpWebsocketRpc\RpcServer\Middleware\RateLimiter\UnlimitedRateLimiter;
 use PhpWebsocketRpc\RpcServer\Server\ClientSession;
 use Psr\Log\LoggerInterface;
 
-/**
- * Middleware that rate-limits incoming RPC requests.
- *
- * Wraps a RateLimiterInterface and delegates the allow/deny decision.
- * On deny, throws a RateLimitException which is caught by the
- * ClientSession and sent back as a proper RPC error response.
- *
- * Usage:
- *   $server->use(new RateLimiterMiddleware(
- *       rateLimiter: new SoftLimitRateLimiter(maxRequests: 100, windowSeconds: 1),
- *       logger: $logger,
- *   ));
- *
- * Custom identifier (e.g. by IP from session attributes):
- *   $server->use(new RateLimiterMiddleware(
- *       rateLimiter: new SoftLimitRateLimiter(30, 1),
- *       identifierFactory: fn(ClientSession $s) =>
- *           $s->getAttribute('remote_ip') ?? (string) $s->getClientId(),
- *       logger: $logger,
- *   ));
- */
 final class RateLimiterMiddleware implements ServerMiddlewareInterface
 {
-    /**
-     * @param RateLimiterInterface $rateLimiter       The rate limiting algorithm
-     * @param \Closure(ClientSession): string|null $identifierFactory
-     *        Optional callable to derive the client identifier from the session.
-     *        Defaults to (string) $session->getClientId()
-     * @param LoggerInterface|null $logger            Optional PSR-3 logger
-     */
     public function __construct(
         private readonly RateLimiterInterface $rateLimiter = new UnlimitedRateLimiter(),
         private readonly ?\Closure $identifierFactory = null,

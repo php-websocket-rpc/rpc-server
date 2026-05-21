@@ -123,7 +123,13 @@ final class ContractRegistry
             );
         }
 
-        $result = $service->$methodName(...$invocation->params);
+        ClientSessionContext::set($session);
+        try {
+            $result = $service->$methodName(...$invocation->params);
+        } finally {
+            ClientSessionContext::reset();
+        }
+
 
         if (!$result instanceof \Traversable) {
             throw new RpcDispatchException(
@@ -210,18 +216,17 @@ final class ContractRegistry
             $session->send($streamValue);
         };
 
-        // Build the parameter list with the push callback injected at the right position
         $params = $invocation->params;
         \array_splice($params, $callableIndex, 0, [$pushCallback]);
 
-        $service->$methodName(...$params);
+        ClientSessionContext::set($session);
+        try {
+            $service->$methodName(...$params);
+        } finally {
+            ClientSessionContext::reset();
+        }
     }
 
-    /**
-     * Dispatch a ContractPublish (publish pattern, client → server).
-     *
-     * Calls the registered method with the decoded data from the client.
-     */
     public function dispatchPublish(ContractPublish $publish, ClientSession $session): void
     {
         $service = $this->getService($publish->service);
@@ -237,10 +242,15 @@ final class ContractRegistry
         // Decoded data is a positional array of arguments
         $decodedData = ContractSerializer::decode($publish->data);
 
-        if (\is_array($decodedData)) {
-            $service->$methodName(...$decodedData);
-        } else {
-            $service->$methodName($decodedData);
+        ClientSessionContext::set($session);
+        try {
+            if (\is_array($decodedData)) {
+                $service->$methodName(...$decodedData);
+            } else {
+                $service->$methodName($decodedData);
+            }
+        } finally {
+            ClientSessionContext::reset();
         }
     }
 

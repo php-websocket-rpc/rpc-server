@@ -13,6 +13,7 @@ use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Payload\RpcResponse;
 use PhpWebsocketRpc\Rpc\Transport\FramedConnection;
+use Psr\Log\LoggerInterface;
 
 final class ClientSession
 {
@@ -34,6 +35,7 @@ final class ClientSession
         WebsocketClient $websocketClient,
         private readonly RpcRouter $router,
         private readonly MiddlewarePipeline $middlewarePipeline,
+        private readonly ?LoggerInterface $logger = null,
     ) {
         $this->connection = new FramedConnection($websocketClient);
         $this->websocket = $websocketClient;
@@ -141,24 +143,23 @@ final class ClientSession
             $response = $this->dispatchThroughMiddleware($payload);
 
             if ($response !== null) {
-                // Wrap in RpcResponse and send back
                 $envelope = new RpcResponse(id: $payload->id, payload: $response);
                 $this->send($envelope);
             }
         } catch (RpcDispatchException $e) {
-            // Known dispatch error — send error response with original exception class
+            $error = new Error(
+                code: $e->getRpcCode(),
+                message: $e->getMessage(),
+                data: $e->getErrorData(),
+                exceptionClass: $e::class,
+            );
+            $this->logger?->error($e->getMessage(), ['error' => $error->toArray()]);
             $this->sendError(
                 $payload->id,
-                new Error(
-                    code: $e->getRpcCode(),
-                    message: $e->getMessage(),
-                    data: $e->getErrorData(),
-                    exceptionClass: $e::class,
-                ),
+                $error,
             );
         } catch (\Throwable $e) {
-            // Unexpected error — include the original exception class
-            // so the client can reconstruct it on the other side
+            $this->logger?->emergency($e->getMessage(), ['exception' => $e::class, 'file' => $e->getFile(), 'line' => $e->getLine(), 'stacktrace' => $e->getTrace()]);
             $this->sendError(
                 $payload->id,
                 new Error(

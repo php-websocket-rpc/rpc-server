@@ -9,15 +9,8 @@ use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Payload\StreamClose;
 use PhpWebsocketRpc\RpcServer\Server\ClientSession;
 
-/**
- * Usage:
- *   $server->channel('orders')->subscribe($session);
- *   $server->channel('orders')->push(new OrderEvent(orderId: 42, status: 'shipped'));
- */
 final class StreamChannel
 {
-    private const int PUSH_CONCURRENCY = 10;
-
     /** @var \SplObjectStorage<ClientSession, null> */
     private readonly \SplObjectStorage $subscribers;
 

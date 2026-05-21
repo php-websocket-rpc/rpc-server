@@ -6,21 +6,6 @@ namespace PhpWebsocketRpc\RpcServer\Auth;
 
 use PhpWebsocketRpc\RpcServer\Server\ClientSession;
 
-/**
- * Fiber-safe static holder for the current ClientSession.
- *
- * Because amphp runs each connection in its own fiber, we can store
- * and retrieve the session per fiber without cross-request interference.
- *
- * The ContractRegistry pushes the session onto this context before
- * dispatching to a service method, so AuthenticationProvider and
- * AuthorizationProvider implementations can access the current
- * client session if needed.
- *
- * Usage:
- *   $session = ClientSessionContext::current();
- *   $session->setAttribute('key', $value);
- */
 final class ClientSessionContext
 {
     /** @var array<int, ClientSession> */

@@ -4,19 +4,6 @@ declare(strict_types=1);
 
 namespace PhpWebsocketRpc\RpcServer\Middleware\RateLimiter;
 
-/**
- * Sliding-window rate limiter.
- *
- * Limits each client to N requests per time window. When the
- * limit is exceeded, the request is rejected (returns false).
- * The window resets automatically after the configured duration.
- *
- * This is a "soft" limiter — it never closes the connection,
- * it only returns an error for offending requests.
- *
- * Usage:
- *   new SoftLimitRateLimiter(maxRequests: 100, windowSeconds: 1);
- */
 final class SoftLimitRateLimiter implements RateLimiterInterface
 {
     /**
