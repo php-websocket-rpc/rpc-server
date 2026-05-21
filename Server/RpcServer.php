@@ -12,7 +12,6 @@ use Amp\Http\Server\SocketHttpServer;
 use Amp\Websocket\Server\Rfc6455Acceptor;
 use Amp\Websocket\Server\Websocket;
 use Amp\Websocket\Server\WebsocketAcceptor;
-
 use Amp\Websocket\Server\WebsocketClientHandler;
 use Amp\Websocket\WebsocketClient;
 use PhpWebsocketRpc\Rpc\Contract\Attribute\NeedAuthorization;
@@ -26,11 +25,9 @@ use PhpWebsocketRpc\Rpc\Exception\AuthorizationException;
 use PhpWebsocketRpc\Rpc\Middleware\MiddlewarePipeline;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
-use PhpWebsocketRpc\Rpc\Serialization\Serializer;
 use PhpWebsocketRpc\RpcServer\Auth\AuthenticationProvider;
 use PhpWebsocketRpc\RpcServer\Auth\AuthorizationProvider;
 use PhpWebsocketRpc\RpcServer\Auth\AuthService;
-
 use PhpWebsocketRpc\RpcServer\Middleware\ServerMiddlewareInterface;
 use PhpWebsocketRpc\RpcServer\Stream\StreamChannel;
 use Psr\Log\LoggerInterface;
@@ -39,40 +36,27 @@ final class RpcServer implements WebsocketClientHandler
 {
     private readonly RpcRouter $router;
     private ?ContractRegistry $contractRegistry = null;
-
     /** @var MiddlewarePipeline<Payload, ?Payload> */
     private readonly MiddlewarePipeline $middlewarePipeline;
-
     /** @var array<string, StreamChannel> */
     private array $channels = [];
-
     /** @var \SplObjectStorage<ClientSession, null> */
     private readonly \SplObjectStorage $sessions;
-
     private ?Websocket $websocket = null;
     private bool $started = false;
-
     private ?AuthenticationProvider $authenticationProvider = null;
     private ?AuthorizationProvider $authorizationProvider = null;
     private bool $authWired = false;
 
     public function __construct(
-        private readonly ?LoggerInterface $logger = null,
+        private readonly WebsocketAcceptor $acceptor,
+        private readonly LoggerInterface $logger
     ) {
         $this->router = new RpcRouter();
         $this->middlewarePipeline = new MiddlewarePipeline();
         $this->sessions = new \SplObjectStorage();
     }
 
-    /**
-     * Attach the RPC server to an amphp HTTP server at the given path.
-     *
-     * @param SocketHttpServer $httpServer The amphp HTTP server instance
-     * @param Router           $router     The amphp HTTP router to attach the WebSocket route to
-     * @param string           $path       The WebSocket endpoint path, e.g. '/rpc'
-     * @param LoggerInterface  $logger     PSR-3 logger
-     * @param WebsocketAcceptor|null $acceptor Optional custom WebSocket acceptor
-     */
     public static function attach(
         SocketHttpServer $httpServer,
         Router $router,
@@ -80,18 +64,14 @@ final class RpcServer implements WebsocketClientHandler
         LoggerInterface $logger,
         ?WebsocketAcceptor $acceptor = null,
     ): self {
-        $server = new self($logger);
+        $server = new self($acceptor ?? new Rfc6455Acceptor(), $logger);
 
-        $wsAcceptor = $acceptor ?? new Rfc6455Acceptor();
-
-        $server->websocket = new Websocket($httpServer, $logger, $wsAcceptor, $server);
+        $server->websocket = new Websocket($httpServer, $logger, $server->acceptor, $server);
 
         $router->addRoute('GET', $path, $server->websocket);
 
         return $server;
     }
-
-    // ─── Public API ────────────────────────────────────────────
 
     /**
      * @template TRequest of Payload
