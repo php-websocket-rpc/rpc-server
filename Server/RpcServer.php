@@ -80,7 +80,7 @@ final class RpcServer implements WebsocketClientHandler
      * @param class-string<TRequest> $requestClass Must implement Kind\RpcRequest
      * @param callable(TRequest, ClientSession): TResponse $handler
      */
-    public function on(string $requestClass, callable $handler): void
+    private function on(string $requestClass, callable $handler): void
     {
         $this->router->on($requestClass, $handler);
 
@@ -94,7 +94,7 @@ final class RpcServer implements WebsocketClientHandler
      * @param class-string<T> $requestClass Must implement Kind\StreamOpen + StreamSubscribable
      * @param callable(T, ClientSession): void $handler
      */
-    public function onSubscribe(string $requestClass, callable $handler): void
+    private function onSubscribe(string $requestClass, callable $handler): void
     {
         $this->router->onSubscribe($requestClass, $handler);
 
@@ -108,7 +108,7 @@ final class RpcServer implements WebsocketClientHandler
      * @param class-string<T> $requestClass Must implement Kind\StreamData + StreamChannelAware
      * @param callable(T, ClientSession): void $handler
      */
-    public function onPublish(string $requestClass, callable $handler): void
+    private function onPublish(string $requestClass, callable $handler): void
     {
         $this->router->onPublish($requestClass, $handler);
 

@@ -31,13 +31,7 @@ $router = new Router($httpServer, $logger, new DefaultErrorHandler());
 // Attach RPC server at /rpc
 $server = RpcServer::attach($httpServer, $router, '/rpc', $logger);
 
-// ─── Register a typed handler ───
-
-$server->on(MathDivideRequest::class, function (MathDivideRequest $r) {
-    return new MathDivideResponse(result: $r->x / $r->y);
-});
-
-// ─── Or use contract services ───
+// ─── Register contract services ───
 
 $server->registerService(MathService::class, new MathServiceImpl());
 
@@ -47,9 +41,15 @@ $httpServer->start($router, new DefaultErrorHandler());
 $server->start();
 ```
 
+The client then uses `createProxy()`:
+
+```php
+$math = $client->createProxy(MathService::class);
+$result = $math->add(10, 5);    // 15
+```
+
 ## Features
 
-- **Typed handlers** — register handlers by payload class
 - **Contract services** — register interface implementations, auto-dispatched via `ContractRegistry`
 - **Streaming** — methods returning `Iterator` are automatically streamed to the client
 - **Subscribe/Publish** — `#[RpcSubscribe]` and `#[RpcPublish]` attributes on interface methods
@@ -207,8 +207,7 @@ $server->registerService(MathService::class, new MathServiceImpl());
 
 | Class | Purpose |
 |-------|---------|
-| `PhpWebsocketRpc\RpcServer\Server\RpcServer` | Main server — attach to HTTP server, register handlers |
-| `PhpWebsocketRpc\RpcServer\Server\RpcRouter` | Routes incoming payloads to registered handlers |
+| `PhpWebsocketRpc\RpcServer\Server\RpcServer` | Main server — attach to HTTP server, register services |
 | `PhpWebsocketRpc\RpcServer\Server\ContractRegistry` | Manages contract service implementations |
 | `PhpWebsocketRpc\RpcServer\Server\ClientSession` | Represents a connected client |
 | `PhpWebsocketRpc\RpcServer\Stream\StreamChannel` | Manages a named stream channel |
