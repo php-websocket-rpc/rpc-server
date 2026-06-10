@@ -13,7 +13,6 @@ use PhpWebsocketRpc\Rpc\Contract\ContractStreamInvocation;
 use PhpWebsocketRpc\Rpc\Contract\ContractStreamValue;
 use PhpWebsocketRpc\Rpc\Exception\RpcDispatchException;
 use PhpWebsocketRpc\Rpc\Payload\Error;
-use PhpWebsocketRpc\RpcServer\Auth\ClientSessionContext;
 
 /**
  * Server-side registry and dispatcher for contract-based RPC services.
@@ -129,7 +128,6 @@ final class ContractRegistry
         } finally {
             ClientSessionContext::reset();
         }
-
 
         if (!$result instanceof \Traversable) {
             throw new RpcDispatchException(

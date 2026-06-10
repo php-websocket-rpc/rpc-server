@@ -4,38 +4,64 @@ declare(strict_types=1);
 
 namespace PhpWebsocketRpc\RpcServer\Auth;
 
-use PhpWebsocketRpc\Rpc\Auth\WebsocketUserInterface;
+use PhpWebsocketRpc\Rpc\Auth\Token;
 use PhpWebsocketRpc\Rpc\Contract\AuthService as AuthServiceContract;
 use PhpWebsocketRpc\Rpc\Exception\AuthenticationException;
+use PhpWebsocketRpc\RpcServer\Server\ClientSessionContext;
 
 /**
  * Auto-registered when RpcServer::useAuthentication() is called.
  *
  * @internal
  */
-final class AuthService implements AuthServiceContract
+final readonly class AuthService implements AuthServiceContract
 {
-    public const string USER = '_auth_user';
-
     public function __construct(
-        private readonly AuthenticationProvider $provider,
+        private AuthenticationProvider $provider,
+        private UserProvider $userProvider,
     ) {}
 
-    public function authenticate(#[\SensitiveParameter] string $token): WebsocketUserInterface
+    public function authenticate(#[\SensitiveParameter] string $token): Token
     {
-        $user = $this->provider->validateToken($token);
+        $userToken = $this->provider->validateToken($token);
 
-        if ($user === null) {
-            throw new AuthenticationException('Invalid or expired token');
-        }
+        $this->validateToken($userToken);
 
-        ClientSessionContext::current()?->setAttribute(self::USER, $user);
+        $session = ClientSessionContext::current();
+        $session?->setAttribute(Attribute::USER_TOKEN->value, $userToken);
+        $session?->setAttribute(Attribute::USER->value, $this->userProvider->getUser($userToken->subject));
 
-        return $user;
+        return $userToken;
+    }
+
+    public function refresh(#[\SensitiveParameter] string $token): Token
+    {
+        $userToken = $this->provider->validateToken($token);
+
+        $this->validateToken($userToken);
+
+        $userToken = $this->provider->refreshToken($userToken);
+        $session = ClientSessionContext::current();
+        $session?->setAttribute(Attribute::USER_TOKEN->value, $userToken);
+        $session?->setAttribute(Attribute::USER->value, $this->userProvider->getUser($userToken->subject));
+
+        return $userToken;
     }
 
     public function logout(): void
     {
-        ClientSessionContext::current()?->setAttribute(self::USER, null);
+        $session = ClientSessionContext::current();
+        $session?->setAttribute(Attribute::USER_TOKEN->value, null);
+        $session?->setAttribute(Attribute::USER->value, null);
+    }
+
+    private function validateToken(#[\SensitiveParameter] ?Token $token = null): void
+    {
+        match (true) {
+            $token === null => throw new AuthenticationException('Invalid or expired token'),
+            $token->notBefore > \time() => throw new AuthenticationException('Token not yet valid'),
+            $token->expiresAt < \time() => throw new AuthenticationException('Token expired'),
+            default => null,
+        };
     }
 }

@@ -2,9 +2,7 @@
 
 declare(strict_types=1);
 
-namespace PhpWebsocketRpc\RpcServer\Auth;
-
-use PhpWebsocketRpc\RpcServer\Server\ClientSession;
+namespace PhpWebsocketRpc\RpcServer\Server;
 
 final class ClientSessionContext
 {
@@ -13,6 +11,10 @@ final class ClientSessionContext
 
     public static function set(ClientSession $session): void
     {
+        if (\array_key_exists(self::getFiberId(), self::$fibers)) {
+            return;
+        }
+
         self::$fibers[self::getFiberId()] = $session;
     }
 

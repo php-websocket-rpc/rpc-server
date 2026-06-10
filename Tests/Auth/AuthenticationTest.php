@@ -5,14 +5,12 @@ declare(strict_types=1);
 namespace PhpWebsocketRpc\RpcServer\Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
+use PhpWebsocketRpc\Rpc\Auth\Token;
 use PhpWebsocketRpc\Rpc\Auth\User;
-
 use PhpWebsocketRpc\Rpc\Exception\AuthenticationException;
 use PhpWebsocketRpc\Rpc\Exception\AuthorizationException;
-
-
-use PhpWebsocketRpc\RpcServer\Auth\BasicAuthenticationProvider;
-use PhpWebsocketRpc\RpcServer\Auth\ClientSessionContext;
+use PhpWebsocketRpc\RpcServer\Auth\StaticTokenAuthenticationProvider;
+use PhpWebsocketRpc\RpcServer\Server\ClientSessionContext;
 
 final class AuthenticationTest extends TestCase
 {
@@ -36,55 +34,50 @@ final class AuthenticationTest extends TestCase
         $this->assertSame([], $user->getRoles());
     }
 
-    // ─── BasicAuthenticationProvider Tests ────────────────────────
+    // ─── StaticTokenAuthenticationProvider Tests ──────────────────
 
-    public function testBasicProviderValidatesToken(): void
+    public function testValidatesCorrectToken(): void
     {
-        $provider = new BasicAuthenticationProvider([
-            'tok-alice' => ['id' => 'alice', 'roles' => ['customer']],
-            'tok-admin' => ['id' => 'bob', 'roles' => ['admin']],
-        ]);
+        $provider = new StaticTokenAuthenticationProvider('my-secret', 'alice');
 
-        $alice = $provider->validateToken('tok-alice');
-        $this->assertNotNull($alice);
-        $this->assertSame('alice', $alice->getUniqueIdentifier());
-        $this->assertSame(['customer'], $alice->getRoles());
-
-        $bob = $provider->validateToken('tok-admin');
-        $this->assertNotNull($bob);
-        $this->assertSame('bob', $bob->getUniqueIdentifier());
-        $this->assertSame(['admin'], $bob->getRoles());
+        $token = $provider->validateToken('my-secret');
+        $this->assertNotNull($token);
+        $this->assertInstanceOf(Token::class, $token);
+        $this->assertSame('alice', $token->subject);
+        $this->assertSame('server', $token->issuer);
+        $this->assertSame('client', $token->audience);
+        $this->assertGreaterThan(\time(), $token->expiresAt);
     }
 
-    public function testBasicProviderRejectsInvalidToken(): void
+    public function testRejectsInvalidToken(): void
     {
-        $provider = new BasicAuthenticationProvider([
-            'tok-alice' => ['id' => 'alice', 'roles' => ['customer']],
-        ]);
+        $provider = new StaticTokenAuthenticationProvider('my-secret', 'alice');
 
-        $this->assertNull($provider->validateToken('invalid-token'));
+        $this->assertNull($provider->validateToken('wrong-token'));
         $this->assertNull($provider->validateToken(''));
     }
 
-    public function testBasicProviderWithEmptyUsers(): void
+    public function testRefreshTokenReturnsNewWithUpdatedExpiry(): void
     {
-        $provider = new BasicAuthenticationProvider([]);
+        $provider = new StaticTokenAuthenticationProvider('my-secret', 'alice');
+        $original = $provider->validateToken('my-secret');
+        $this->assertNotNull($original);
 
-        $this->assertNull($provider->validateToken('anything'));
+        $refreshed = $provider->refreshToken($original);
+
+        $this->assertSame($original->id, $refreshed->id);
+        $this->assertSame($original->subject, $refreshed->subject);
+        $this->assertGreaterThan(\time(), $refreshed->expiresAt);
+        $this->assertSame($original->issuer, $refreshed->issuer);
     }
 
-    // ─── AuthService Unit Tests ────────────────────────────────────
-
-    public function testAuthServiceAcceptsValidToken(): void
+    public function testUsesDefaultSubjectWhenNotProvided(): void
     {
-        $provider = new BasicAuthenticationProvider([
-            'tok-alice' => ['id' => 'alice', 'roles' => ['customer']],
-        ]);
+        $provider = new StaticTokenAuthenticationProvider('my-secret');
 
-        // We can't easily test the full AuthService flow here because it
-        // requires a real ClientSession (which needs a WebSocket client).
-        // This is tested via the integration test instead.
-        $this->assertTrue(true);
+        $token = $provider->validateToken('my-secret');
+        $this->assertNotNull($token);
+        $this->assertSame('rpc', $token->subject);
     }
 
     // ─── Exception Tests ──────────────────────────────────────────

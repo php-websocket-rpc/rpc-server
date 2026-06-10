@@ -4,21 +4,20 @@ declare(strict_types=1);
 
 namespace PhpWebsocketRpc\RpcServer\Server;
 
-use Amp\Socket\TlsInfo;
-use Amp\Websocket\WebsocketClient;
 use PhpWebsocketRpc\Rpc\Exception\RpcDispatchException;
-use PhpWebsocketRpc\Rpc\Middleware\MiddlewarePipeline;
 use PhpWebsocketRpc\Rpc\Payload\Error;
 use PhpWebsocketRpc\Rpc\Payload\Kind;
 use PhpWebsocketRpc\Rpc\Payload\Payload;
 use PhpWebsocketRpc\Rpc\Payload\RpcResponse;
 use PhpWebsocketRpc\Rpc\Transport\FramedConnection;
+use PhpWebsocketRpc\Rpc\Transport\TlsInfoInterface;
+use PhpWebsocketRpc\Rpc\Transport\WebSocketClientInterface;
 use Psr\Log\LoggerInterface;
 
 final class ClientSession
 {
     private readonly FramedConnection $connection;
-    private readonly WebsocketClient $websocket;
+    private readonly WebSocketClientInterface $websocket;
 
     /** @var array<string, mixed> Session attributes (for middleware) */
     private array $attributes = [];
@@ -32,9 +31,8 @@ final class ClientSession
     private ?\Closure $onDisconnectCallback = null;
 
     public function __construct(
-        WebsocketClient $websocketClient,
-        private readonly RpcRouter $router,
-        private readonly MiddlewarePipeline $middlewarePipeline,
+        WebSocketClientInterface $websocketClient,
+        private readonly RpcDispatcherInterface $dispatcher,
         private readonly ?LoggerInterface $logger = null,
     ) {
         $this->connection = new FramedConnection($websocketClient);
@@ -47,13 +45,15 @@ final class ClientSession
             foreach ($this->connection->receiveStream() as $payload) {
                 $this->handleMessage($payload);
             }
-        } catch (\Throwable) {
-            // Connection closed — clean up
+        } catch (\Throwable $e) {
+            $this->logger?->debug('Session receive error', [
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
         } finally {
             $this->closed = true;
         }
 
-        // Notify disconnect (e.g. for channel cleanup)
         $this->onDisconnectCallback?->__invoke();
     }
 
@@ -82,8 +82,6 @@ final class ClientSession
     }
 
     /**
-     * Register a callback for when the client unsubscribes from a stream channel.
-     *
      * @param \Closure(string $channel): void $callback
      */
     public function onStreamClose(\Closure $callback): void
@@ -92,8 +90,6 @@ final class ClientSession
     }
 
     /**
-     * Register a callback for when the client disconnects.
-     *
      * @param \Closure(): void $callback
      */
     public function onDisconnect(\Closure $callback): void
@@ -106,7 +102,7 @@ final class ClientSession
         return $this->websocket->getId();
     }
 
-    public function getTlsInfo(): ?TlsInfo
+    public function getTlsInfo(): ?TlsInfoInterface
     {
         return $this->websocket->getTlsInfo();
     }
@@ -133,14 +129,14 @@ final class ClientSession
 
     private function handleMessage(Payload $payload): void
     {
-        // Handle StreamClose immediately — not routed through middleware/handlers
         if ($payload instanceof Kind\StreamClose) {
             $this->onStreamCloseCallback?->__invoke($payload->channel());
+
             return;
         }
 
         try {
-            $response = $this->dispatchThroughMiddleware($payload);
+            $response = $this->dispatcher->dispatch($payload, $this);
 
             if ($response !== null) {
                 $envelope = new RpcResponse(id: $payload->id, payload: $response);
@@ -154,12 +150,14 @@ final class ClientSession
                 exceptionClass: $e::class,
             );
             $this->logger?->error($e->getMessage(), ['error' => $error->toArray()]);
-            $this->sendError(
-                $payload->id,
-                $error,
-            );
+            $this->sendError($payload->id, $error);
         } catch (\Throwable $e) {
-            $this->logger?->emergency($e->getMessage(), ['exception' => $e::class, 'file' => $e->getFile(), 'line' => $e->getLine(), 'stacktrace' => $e->getTrace()]);
+            $this->logger?->emergency($e->getMessage(), [
+                'exception' => $e::class,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'stacktrace' => $e->getTrace(),
+            ]);
             $this->sendError(
                 $payload->id,
                 new Error(
@@ -170,21 +168,6 @@ final class ClientSession
                 ),
             );
         }
-    }
-
-    private function dispatchThroughMiddleware(Payload $payload): ?Payload
-    {
-        if ($this->middlewarePipeline->count() === 0) {
-            return $this->router->dispatch($payload, $this);
-        }
-
-        return $this->middlewarePipeline->execute(
-            $payload,
-            function (Payload $payload, ClientSession $session): ?Payload {
-                return $this->router->dispatch($payload, $session);
-            },
-            $this, // Pass session as extra arg
-        );
     }
 
     private function sendError(string $requestId, Error $error): void
